@@ -1,0 +1,67 @@
+{
+  "entities": {
+    "Room": {
+      "title": "Room",
+      "description": "A collaborative study room.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "members": {
+          "type": "object",
+          "description": "Map of user IDs to their roles (owner, editor, viewer)."
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "ownerId", "members", "createdAt"]
+    },
+    "RoomItem": {
+      "title": "RoomItem",
+      "description": "A file or group within a room.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["file", "group"] },
+        "parentId": { "type": "string", "description": "ID of the parent group, or null for root." },
+        "name": { "type": "string" },
+        "content": { "type": "string", "description": "File content or metadata." },
+        "mimeType": { "type": "string", "description": "MIME type of the file." },
+        "pinned": { "type": "boolean" },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["type", "name", "pinned", "order", "createdAt", "updatedAt"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "A message sent in the room chat.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "text": { "type": "string" },
+        "mentions": { "type": "array", "items": { "type": "string" } },
+        "replyTo": { "type": "string", "description": "ID of the message being replied to." },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["senderId", "senderName", "text", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/rooms/{roomId}": {
+      "schema": "Room",
+      "description": "Root room document."
+    },
+    "/rooms/{roomId}/items/{itemId}": {
+      "schema": "RoomItem",
+      "description": "Items (files/groups) within a room."
+    },
+    "/rooms/{roomId}/messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Chat messages in the room."
+    }
+  }
+}

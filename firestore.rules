@@ -1,0 +1,104 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: rooms
+// Document ID: {roomId}
+// Fields:
+//   - id: string (required)
+//   - name: string (required, 1-100 chars)
+//   - ownerId: string (required, immutable)
+//   - members: map (required, keys are user IDs, values are 'owner', 'editor', 'viewer')
+//   - createdAt: timestamp (required, immutable)
+//
+// Collection: rooms/{roomId}/items
+// Document ID: {itemId}
+// Fields:
+//   - id: string (required)
+//   - type: string (required, 'file' or 'group')
+//   - parentId: string (optional, null for root)
+//   - name: string (required, 1-255 chars)
+//   - content: string (optional, max 100kb)
+//   - pinned: boolean (required)
+//   - order: number (required)
+//   - createdAt: timestamp (required, immutable)
+//   - updatedAt: timestamp (required)
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isRoomMember(roomId) {
+      return isAuthenticated() && (request.auth.uid in get(/databases/$(database)/documents/rooms/$(roomId)).data.members);
+    }
+
+    function isRoomOwner(roomId) {
+      return isAuthenticated() && get(/databases/$(database)/documents/rooms/$(roomId)).data.ownerId == request.auth.uid;
+    }
+
+    function isRoomEditor(roomId) {
+      return isAuthenticated() && 
+             (get(/databases/$(database)/documents/rooms/$(roomId)).data.members[request.auth.uid] == 'owner' || 
+              get(/databases/$(database)/documents/rooms/$(roomId)).data.members[request.auth.uid] == 'editor');
+    }
+
+    function isValidRoom(data) {
+      return data.keys().hasAll(['name', 'ownerId', 'members', 'createdAt']) &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             data.ownerId is string &&
+             data.members is map &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidRoomItem(data) {
+      return data.keys().hasAll(['type', 'name', 'pinned', 'order', 'createdAt', 'updatedAt']) &&
+             data.type in ['file', 'group'] &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 255 &&
+             data.pinned is bool &&
+             data.order is number &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidChatMessage(data) {
+      return data.keys().hasAll(['senderId', 'senderName', 'text', 'createdAt']) &&
+             data.senderId is string &&
+             data.senderName is string &&
+             data.text is string && data.text.size() >= 1 && data.text.size() <= 2000 &&
+             data.createdAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /rooms/{roomId} {
+      allow read: if isAuthenticated() && (request.auth.uid in resource.data.members);
+      allow create: if isAuthenticated() && isValidRoom(request.resource.data) && request.resource.data.ownerId == request.auth.uid;
+      allow update: if isRoomOwner(roomId) && isValidRoom(request.resource.data) && request.resource.data.ownerId == resource.data.ownerId;
+      allow delete: if isRoomOwner(roomId);
+
+      match /items/{itemId} {
+        allow read: if isAuthenticated() && (request.auth.uid in get(/databases/$(database)/documents/rooms/$(roomId)).data.members);
+        allow create: if isRoomEditor(roomId) && isValidRoomItem(request.resource.data);
+        allow update: if isRoomEditor(roomId) && isValidRoomItem(request.resource.data) && request.resource.data.createdAt == resource.data.createdAt;
+        allow delete: if isRoomEditor(roomId);
+      }
+
+      match /messages/{messageId} {
+        allow read: if isRoomMember(roomId);
+        allow create: if isRoomMember(roomId) && isValidChatMessage(request.resource.data) && request.resource.data.senderId == request.auth.uid;
+        allow delete: if isRoomOwner(roomId) || (isRoomMember(roomId) && resource.data.senderId == request.auth.uid);
+      }
+    }
+  }
+}

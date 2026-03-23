@@ -42,6 +42,8 @@ export default function App() {
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newRoomName, setNewRoomName] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filter, setFilter] = useState<'all' | 'owned' | 'shared'>('all');
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -206,10 +208,45 @@ export default function App() {
         </div>
 
         <div className="flex items-center gap-6">
+          <div className="hidden lg:flex items-center gap-2 bg-zinc-100 px-3 py-1.5 rounded-xl border border-zinc-200 w-80 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all">
+            <Search className="w-4 h-4 text-zinc-400" />
+            <input 
+              type="text" 
+              placeholder="Search rooms..." 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="bg-transparent border-none outline-none text-sm w-full font-medium text-zinc-700 placeholder:text-zinc-400"
+            />
+          </div>
+
           <div className="hidden md:flex items-center gap-1 bg-zinc-100 p-1 rounded-xl border border-zinc-200">
-            <button className="px-4 py-1.5 bg-white text-zinc-900 rounded-lg text-sm font-bold shadow-sm">My Rooms</button>
-            <button className="px-4 py-1.5 text-zinc-500 hover:text-zinc-900 rounded-lg text-sm font-bold transition-colors">Shared</button>
-            <button className="px-4 py-1.5 text-zinc-500 hover:text-zinc-900 rounded-lg text-sm font-bold transition-colors">Archive</button>
+            <button 
+              onClick={() => setFilter('all')}
+              className={cn(
+                "px-4 py-1.5 rounded-lg text-sm font-bold transition-all",
+                filter === 'all' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-900"
+              )}
+            >
+              All
+            </button>
+            <button 
+              onClick={() => setFilter('owned')}
+              className={cn(
+                "px-4 py-1.5 rounded-lg text-sm font-bold transition-all",
+                filter === 'owned' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-900"
+              )}
+            >
+              Owned
+            </button>
+            <button 
+              onClick={() => setFilter('shared')}
+              className={cn(
+                "px-4 py-1.5 rounded-lg text-sm font-bold transition-all",
+                filter === 'shared' ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-900"
+              )}
+            >
+              Shared
+            </button>
           </div>
           
           <div className="flex items-center gap-3 border-l border-zinc-200 pl-6">
@@ -246,7 +283,15 @@ export default function App() {
         {/* Room Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           <AnimatePresence>
-            {rooms.map((room) => (
+            {rooms
+              .filter(room => {
+                const matchesSearch = room.name.toLowerCase().includes(searchQuery.toLowerCase());
+                const isOwner = room.ownerId === user.uid;
+                if (filter === 'owned') return matchesSearch && isOwner;
+                if (filter === 'shared') return matchesSearch && !isOwner;
+                return matchesSearch;
+              })
+              .map((room) => (
               <motion.div
                 key={room.id}
                 initial={{ opacity: 0, y: 20 }}

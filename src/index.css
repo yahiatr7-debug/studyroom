@@ -1,1 +1,31 @@
 @import "tailwindcss";
+
+.quill-container .quill {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.quill-container .ql-container {
+  flex: 1;
+  overflow-y: auto;
+  font-family: inherit;
+  font-size: 14px;
+}
+
+.quill-container .ql-editor {
+  height: 100%;
+  min-height: 100%;
+}
+
+.quill-container .ql-toolbar {
+  border-top: none !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-bottom: 1px solid #e5e7eb !important;
+  background: #f9fafb;
+}
+
+.quill-container .ql-container.ql-snow {
+  border: none !important;
+}

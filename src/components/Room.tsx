@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Plus, 
+  Search,
   FolderPlus, 
   FilePlus, 
   MoreVertical, 
@@ -92,6 +93,36 @@ interface UploadTask {
   error?: string;
 }
 
+const getFileIcon = (name: string, mimeType?: string) => {
+  const ext = name.split('.').pop()?.toLowerCase();
+  if (mimeType?.startsWith('image/')) return <ImageIcon className="w-4 h-4 text-purple-500" />;
+  if (mimeType === 'application/pdf') return <FileIcon className="w-4 h-4 text-red-500" />;
+  
+  switch (ext) {
+    case 'js':
+    case 'ts':
+    case 'tsx':
+    case 'jsx':
+      return <FileCode className="w-4 h-4 text-yellow-500" />;
+    case 'html':
+      return <FileCode className="w-4 h-4 text-orange-500" />;
+    case 'css':
+      return <FileCode className="w-4 h-4 text-blue-400" />;
+    case 'py':
+      return <FileCode className="w-4 h-4 text-blue-600" />;
+    case 'json':
+      return <FileCode className="w-4 h-4 text-zinc-500" />;
+    case 'md':
+      return <FileText className="w-4 h-4 text-zinc-600" />;
+    case 'zip':
+    case 'rar':
+    case '7z':
+      return <FileIcon className="w-4 h-4 text-amber-600" />;
+    default:
+      return <FileText className="w-4 h-4 text-blue-500" />;
+  }
+};
+
 export const Room: React.FC<RoomProps> = ({ room, userRole }) => {
   const [items, setItems] = useState<RoomItem[]>([]);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -99,6 +130,7 @@ export const Room: React.FC<RoomProps> = ({ room, userRole }) => {
   const [hoverPreview, setHoverPreview] = useState<{ id: string; name: string; content: string; mimeType?: string; x: number; y: number } | null>(null);
   const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
   const [uploads, setUploads] = useState<UploadTask[]>([]);
+  const [itemSearchQuery, setItemSearchQuery] = useState('');
 
   const updateUpload = (id: string, updates: Partial<UploadTask>) => {
     setUploads(prev => prev.map(u => u.id === id ? { ...u, ...updates } : u));
@@ -116,6 +148,7 @@ export const Room: React.FC<RoomProps> = ({ room, userRole }) => {
   const [newItemName, setNewItemName] = useState('');
   const [newItemContent, setNewItemContent] = useState('');
   const [isDraggingOver, setIsDraggingOver] = useState(false);
+  const [dragCounter, setDragCounter] = useState(0);
   const [activeDragItem, setActiveDragItem] = useState<RoomItem | null>(null);
 
   // Chat State
@@ -205,15 +238,38 @@ export const Room: React.FC<RoomProps> = ({ room, userRole }) => {
     }
   }, [chatOpen, messages]);
 
+  // Sync open windows with Firestore items for real-time collaboration
+  useEffect(() => {
+    if (windows.length === 0) return;
+
+    const windowItemIds = windows.map(w => w.itemId);
+    const unsubscribes = windowItemIds.map(itemId => {
+      return onSnapshot(doc(db, 'rooms', room.id, 'items', itemId), (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data() as RoomItem;
+          setWindows(prev => prev.map(w => {
+            // Only update if content is different to avoid cursor jumps
+            if (w.itemId === itemId && w.content !== data.content) {
+              return { ...w, content: data.content || '', name: data.name };
+            }
+            return w;
+          }));
+        }
+      });
+    });
+
+    return () => unsubscribes.forEach(unsub => unsub());
+  }, [windows.length, room.id]); // Simplified dependency, might need refinement if windows change but length stays same
+
   const sendMessage = async () => {
-    if (!chatMessage.trim()) return;
+    if (!chatMessage.trim() || !auth.currentUser) return;
 
     const mentions = chatMessage.match(/@\[([^\]]+)\]\(([^)]+)\)/g)?.map(m => m.match(/\(([^)]+)\)/)?.[1] || '') || [];
 
     try {
       await addDoc(collection(db, 'rooms', room.id, 'messages'), {
-        senderId: auth.currentUser?.uid,
-        senderName: auth.currentUser?.displayName || 'Anonymous',
+        senderId: auth.currentUser.uid,
+        senderName: auth.currentUser.displayName || 'Anonymous',
         text: chatMessage,
         mentions,
         replyTo: replyTo?.id || null,
@@ -307,7 +363,7 @@ export const Room: React.FC<RoomProps> = ({ room, userRole }) => {
         parentId: isAddItemModalOpen.parentId,
         name: newItemName,
         content: newItemContent,
-        mimeType: isAddItemModalOpen.type === 'file' ? 'text/plain' : undefined,
+        ...(isAddItemModalOpen.type === 'file' ? { mimeType: 'text/plain' } : {}),
         pinned: false,
         order: items.length,
         createdAt: serverTimestamp(),
@@ -384,7 +440,7 @@ export const Room: React.FC<RoomProps> = ({ room, userRole }) => {
         parentId: parentId,
         name: file.name,
         content: content,
-        mimeType: mimeType,
+        ...(mimeType ? { mimeType } : {}),
         pinned: false,
         order: items.length,
         createdAt: serverTimestamp(),
@@ -478,6 +534,24 @@ export const Room: React.FC<RoomProps> = ({ room, userRole }) => {
     setWindows(windows.map(w => w.id === id ? { ...w, ...updates } : w));
   };
 
+  const handleContentChange = async (windowId: string, content: string) => {
+    const win = windows.find(w => w.id === windowId);
+    if (!win) return;
+
+    // Update local state immediately for responsiveness
+    setWindows(prev => prev.map(w => w.id === windowId ? { ...w, content } : w));
+
+    // Update Firestore
+    try {
+      await updateDoc(doc(db, 'rooms', room.id, 'items', win.itemId), {
+        content,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error("Error updating content:", err);
+    }
+  };
+
   const focusWindow = (id: string) => {
     const maxZ = Math.max(...windows.map(w => w.zIndex), 0);
     setWindows(windows.map(w => w.id === id ? { ...w, zIndex: maxZ + 1 } : w));
@@ -565,7 +639,17 @@ export const Room: React.FC<RoomProps> = ({ room, userRole }) => {
 
   const renderItems = (parentId: string | null = null, level: number = 0) => {
     const filtered = items
-      .filter(item => item.parentId === parentId)
+      .filter(item => {
+        const matchesParent = item.parentId === parentId;
+        const matchesSearch = item.name.toLowerCase().includes(itemSearchQuery.toLowerCase());
+        
+        // If searching, show all matching items regardless of parent (flat list)
+        // but for the recursive call, we still need to respect parent structure if not searching
+        if (itemSearchQuery) {
+          return matchesSearch;
+        }
+        return matchesParent;
+      })
       .sort((a, b) => {
         // Sort pinned items to the top
         if (a.pinned && !b.pinned) return -1;
@@ -605,9 +689,26 @@ export const Room: React.FC<RoomProps> = ({ room, userRole }) => {
   return (
     <div 
       className="flex flex-col h-screen bg-zinc-50 overflow-hidden font-sans relative"
-      onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
-      onDragLeave={() => setIsDraggingOver(false)}
-      onDrop={handleFileDrop}
+      onDragOver={(e) => {
+        e.preventDefault();
+      }}
+      onDragEnter={(e) => {
+        e.preventDefault();
+        setDragCounter(prev => prev + 1);
+        if (canEdit) setIsDraggingOver(true);
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        setDragCounter(prev => {
+          const next = Math.max(0, prev - 1);
+          if (next === 0) setIsDraggingOver(false);
+          return next;
+        });
+      }}
+      onDrop={(e) => {
+        setDragCounter(0);
+        handleFileDrop(e);
+      }}
     >
       <AnimatePresence>
         {isDraggingOver && (
@@ -700,6 +801,20 @@ export const Room: React.FC<RoomProps> = ({ room, userRole }) => {
               </div>
             )}
           </div>
+          
+          <div className="px-4 py-2 border-b border-zinc-100">
+            <div className="flex items-center gap-2 bg-zinc-100 px-2 py-1.5 rounded-lg border border-zinc-200 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all">
+              <Search className="w-3.5 h-3.5 text-zinc-400" />
+              <input 
+                type="text" 
+                placeholder="Search items..." 
+                value={itemSearchQuery}
+                onChange={(e) => setItemSearchQuery(e.target.value)}
+                className="bg-transparent border-none outline-none text-xs w-full font-medium text-zinc-700 placeholder:text-zinc-400"
+              />
+            </div>
+          </div>
+
           <div className="flex-1 overflow-y-auto">
             {items.some(i => i.pinned) && (
               <div className="p-4 border-b border-zinc-100 bg-blue-50/10">
@@ -719,15 +834,10 @@ export const Room: React.FC<RoomProps> = ({ room, userRole }) => {
                     >
                       {item.type === 'group' ? (
                         <Folder className="w-4 h-4 text-amber-400 fill-amber-400" />
-                      ) : item.mimeType?.startsWith('image/') ? (
-                        <ImageIcon className="w-4 h-4 text-purple-500" />
-                      ) : item.mimeType === 'application/pdf' ? (
-                        <FileIcon className="w-4 h-4 text-red-500" />
-                      ) : (
-                        <FileText className="w-4 h-4 text-blue-500" />
-                      )}
-                      <span className="flex-1 text-sm font-medium text-zinc-700 truncate">
+                      ) : getFileIcon(item.name, item.mimeType)}
+                      <span className="flex-1 text-sm font-medium text-zinc-700 truncate flex items-center gap-2">
                         {item.name}
+                        <Pin className="w-2.5 h-2.5 text-blue-400" />
                       </span>
                       <button 
                         onClick={(e) => { e.stopPropagation(); togglePin(item); }}
@@ -749,13 +859,19 @@ export const Room: React.FC<RoomProps> = ({ room, userRole }) => {
         </aside>
 
         {/* Main Workspace */}
-        <section className="flex-1 relative bg-zinc-100/50 overflow-hidden">
+        <section 
+          className="flex-1 relative bg-zinc-100/50 overflow-hidden"
+          onDragOver={(e) => { e.preventDefault(); setIsDraggingOver(true); }}
+          onDragLeave={() => setIsDraggingOver(false)}
+          onDrop={handleFileDrop}
+        >
           {/* Multi-Window Layer */}
           <WindowManager 
             windows={windows} 
             onClose={closeWindow} 
             onUpdate={updateWindow} 
             onFocus={focusWindow}
+            onContentChange={handleContentChange}
           />
 
           {/* Empty State Background */}
@@ -1507,17 +1623,12 @@ const DraggableRoomItem = ({
           
           {item.type === 'group' ? (
             <Folder className="w-4 h-4 text-amber-400 fill-amber-400" />
-          ) : item.mimeType?.startsWith('image/') ? (
-            <ImageIcon className="w-4 h-4 text-purple-500" />
-          ) : item.mimeType === 'application/pdf' ? (
-            <FileIcon className="w-4 h-4 text-red-500" />
-          ) : (
-            <FileText className="w-4 h-4 text-blue-500" />
-          )}
+          ) : getFileIcon(item.name, item.mimeType)}
         </div>
         
-        <span className="flex-1 text-sm font-medium text-zinc-700 truncate">
+        <span className="flex-1 text-sm font-medium text-zinc-700 truncate flex items-center gap-2">
           {item.name}
+          {item.pinned && <Pin className="w-2.5 h-2.5 text-blue-400" />}
         </span>
 
         <div className="flex items-center gap-1 opacity-0 group-hover/item:opacity-100 transition-opacity">

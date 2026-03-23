@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Pin, PinOff, Maximize2, Minimize2, Move } from 'lucide-react';
+import ReactQuill from 'react-quill-new';
+import 'react-quill-new/dist/quill.snow.css';
 import { WindowState } from '../types';
 import { cn } from '../lib/utils';
 
@@ -9,6 +11,7 @@ interface WindowManagerProps {
   onClose: (id: string) => void;
   onUpdate: (id: string, updates: Partial<WindowState>) => void;
   onFocus: (id: string) => void;
+  onContentChange: (id: string, content: string) => void;
 }
 
 export const WindowManager: React.FC<WindowManagerProps> = ({
@@ -16,6 +19,7 @@ export const WindowManager: React.FC<WindowManagerProps> = ({
   onClose,
   onUpdate,
   onFocus,
+  onContentChange,
 }) => {
   return (
     <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
@@ -27,6 +31,7 @@ export const WindowManager: React.FC<WindowManagerProps> = ({
             onClose={() => onClose(win.id)}
             onUpdate={(updates) => onUpdate(win.id, updates)}
             onFocus={() => onFocus(win.id)}
+            onContentChange={(content) => onContentChange(win.id, content)}
           />
         ))}
       </AnimatePresence>
@@ -39,45 +44,60 @@ interface WindowItemProps {
   onClose: () => void;
   onUpdate: (updates: Partial<WindowState>) => void;
   onFocus: () => void;
+  onContentChange: (content: string) => void;
 }
 
 const WindowItem: React.FC<WindowItemProps> = ({
-  window,
+  window: win,
   onClose,
   onUpdate,
   onFocus,
+  onContentChange,
 }) => {
   const [isResizing, setIsResizing] = useState(false);
   const windowRef = useRef<HTMLDivElement>(null);
 
   const handleDragEnd = (_: any, info: any) => {
-    if (window.isPinned) return;
-    onUpdate({ x: window.x + info.offset.x, y: window.y + info.offset.y });
+    if (win.isPinned) return;
+    onUpdate({ x: win.x + info.offset.x, y: win.y + info.offset.y });
+  };
+
+  const isRichText = win.mimeType === 'text/html' || win.mimeType === 'text/plain' || !win.mimeType;
+  const isCode = win.mimeType?.includes('javascript') || win.mimeType?.includes('typescript') || win.mimeType?.includes('css') || win.mimeType?.includes('json');
+
+  const modules = {
+    toolbar: [
+      [{ 'header': [1, 2, false] }],
+      ['bold', 'italic', 'underline', 'strike', 'blockquote'],
+      [{ 'list': 'ordered' }, { 'list': 'bullet' }],
+      ['link', 'image'],
+      ['clean']
+    ],
   };
 
   return (
     <motion.div
       ref={windowRef}
-      initial={{ opacity: 0, scale: 0.9, x: window.x, y: window.y }}
+      initial={{ opacity: 0, scale: 0.9, x: win.x, y: win.y }}
       animate={{ 
         opacity: 1, 
         scale: 1, 
-        x: window.x, 
-        y: window.y,
-        width: window.width,
-        height: window.height,
-        zIndex: window.isPinned ? 1000 + window.zIndex : window.zIndex 
+        x: win.x, 
+        y: win.y,
+        width: win.width,
+        height: win.height,
+        zIndex: win.isPinned ? 1000 + win.zIndex : win.zIndex 
       }}
       exit={{ opacity: 0, scale: 0.9 }}
-      drag={!window.isPinned}
+      drag={!win.isPinned}
       dragMomentum={false}
       onDragStart={onFocus}
       onDragEnd={handleDragEnd}
       className={cn(
         "absolute pointer-events-auto bg-white border border-zinc-200 rounded-xl shadow-2xl flex flex-col overflow-hidden",
-        window.isPinned && "border-blue-500 ring-2 ring-blue-500/20"
+        win.isPinned && "border-blue-500 ring-2 ring-blue-500/20"
       )}
-      style={{ width: window.width, height: window.height }}
+      style={{ width: win.width, height: win.height }}
     >
       {/* Header */}
       <div 
@@ -86,18 +106,18 @@ const WindowItem: React.FC<WindowItemProps> = ({
       >
         <div className="flex items-center gap-2 overflow-hidden">
           <Move className="w-4 h-4 text-zinc-400 shrink-0" />
-          <span className="text-sm font-medium text-zinc-700 truncate">{window.name}</span>
+          <span className="text-sm font-medium text-zinc-700 truncate">{win.name}</span>
         </div>
         <div className="flex items-center gap-1">
           <button
-            onClick={() => onUpdate({ isPinned: !window.isPinned })}
+            onClick={() => onUpdate({ isPinned: !win.isPinned })}
             className={cn(
               "p-1.5 rounded-md transition-colors",
-              window.isPinned ? "text-blue-600 bg-blue-50" : "text-zinc-500 hover:bg-zinc-200"
+              win.isPinned ? "text-blue-600 bg-blue-50" : "text-zinc-500 hover:bg-zinc-200"
             )}
-            title={window.isPinned ? "Unpin window" : "Pin window"}
+            title={win.isPinned ? "Unpin window" : "Pin window"}
           >
-            {window.isPinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />}
+            {win.isPinned ? <PinOff className="w-4 h-4" /> : <Pin className="w-4 h-4" />}
           </button>
           <button
             onClick={onClose}
@@ -109,54 +129,68 @@ const WindowItem: React.FC<WindowItemProps> = ({
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto p-4 prose prose-sm max-w-none bg-white">
-        {window.mimeType?.startsWith('image/') ? (
-          <div className="flex items-center justify-center min-h-full">
+      <div className="flex-1 overflow-hidden bg-white relative flex flex-col">
+        {win.mimeType?.startsWith('image/') ? (
+          <div className="absolute inset-0 overflow-auto p-4 flex items-center justify-center">
             <img 
-              src={window.content} 
-              alt={window.name} 
+              src={win.content} 
+              alt={win.name} 
               className="max-w-full h-auto rounded-lg shadow-sm"
               referrerPolicy="no-referrer"
             />
           </div>
-        ) : window.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ? (
+        ) : win.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ? (
           <div 
-            className="text-zinc-800 font-sans leading-relaxed"
-            dangerouslySetInnerHTML={{ __html: window.content }}
+            className="absolute inset-0 overflow-auto p-4 text-zinc-800 font-sans leading-relaxed"
+            dangerouslySetInnerHTML={{ __html: win.content }}
           />
-        ) : (
-          <div className="whitespace-pre-wrap text-zinc-800 font-sans leading-relaxed">
-            {window.content}
+        ) : isRichText && !isCode ? (
+          <div className="flex-1 flex flex-col overflow-hidden quill-container" onMouseDown={onFocus}>
+            <ReactQuill
+              theme="snow"
+              value={win.content}
+              onChange={onContentChange}
+              modules={modules}
+              className="flex-1 flex flex-col overflow-hidden"
+            />
           </div>
+        ) : (
+          <textarea
+            value={win.content}
+            onChange={(e) => onContentChange(e.target.value)}
+            onFocus={onFocus}
+            className="absolute inset-0 w-full h-full p-4 bg-transparent border-none outline-none resize-none font-mono leading-relaxed text-zinc-800 focus:ring-0 text-sm"
+            spellCheck={false}
+          />
         )}
       </div>
 
       {/* Footer / Pin Button */}
       <div className="p-2 border-t border-zinc-100 flex justify-center bg-zinc-50/50">
         <button
-          onClick={() => onUpdate({ isPinned: !window.isPinned })}
+          onClick={() => onUpdate({ isPinned: !win.isPinned })}
           className={cn(
             "text-[10px] uppercase tracking-wider font-bold px-3 py-1 rounded-full border transition-all",
-            window.isPinned 
+            win.isPinned 
               ? "bg-blue-600 text-white border-blue-600 shadow-lg shadow-blue-500/20" 
               : "bg-white text-zinc-500 border-zinc-200 hover:border-zinc-400"
           )}
         >
-          {window.isPinned ? "Pinned Here" : "Pin Here"}
+          {win.isPinned ? "Pinned Here" : "Pin Here"}
         </button>
       </div>
 
       {/* Resize Handle */}
-      {!window.isPinned && (
+      {!win.isPinned && (
         <div
-          className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize bg-zinc-200/50 hover:bg-zinc-400/50 transition-colors rounded-tl-md"
+          className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize bg-zinc-200/50 hover:bg-zinc-400/50 transition-colors rounded-tl-md z-10"
           onMouseDown={(e) => {
             e.stopPropagation();
             setIsResizing(true);
             const startX = e.clientX;
             const startY = e.clientY;
-            const startWidth = window.width;
-            const startHeight = window.height;
+            const startWidth = win.width;
+            const startHeight = win.height;
 
             const onMouseMove = (moveEvent: MouseEvent) => {
               onUpdate({
